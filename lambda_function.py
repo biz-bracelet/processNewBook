@@ -17,9 +17,9 @@ s3_client = boto3.client('s3')
 dynamodb_resource = boto3.resource('dynamodb') # Resource 객체로 변경 (테이블 객체 얻기 위함)
 bedrock_runtime_client = boto3.client('bedrock-runtime') # 클라이언트 이름 변경
 
-# 설정값
-BOOK_META_TABLE_NAME = '' #실제 AWS 리소스 이름으로 변경
-PROCESSED_TEXT_BUCKET_NAME = '' #실제 AWS 리소스 이름으로 변경
+# --- 설정값 (당신의 실제 AWS 리소스 이름으로 변경해야 합니다!) ---
+BOOK_META_TABLE_NAME = 'BookMetaDataTable'
+PROCESSED_TEXT_BUCKET_NAME = 'biz-bracelet-book-game-processed-data'
 BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 # DynamoDB 테이블 객체 초기화 (전역으로 한 번만 초기화)
@@ -85,52 +85,75 @@ def analyze_book_with_bedrock(extracted_text, book_id):
                     {
                         "type": "text",
                         "text": f"""
-Based on the following text, please provide detailed and vivid explanations for each of the following aspects. 
-For the protagonist, describe in rich detail including name, estimated age, gender, clothing style, hair color and style, eye color, and any other distinctive physical features. 
-Also include personality, background, and motivations. 
-The goal is to provide enough visual and narrative detail to create an AI-generated text game and it's storyline.
+You are an expert at analyzing book content and extracting game metadata in JSON format.
+Your goal is to provide enough visual and narrative detail to create an AI-generated text game and its storyline.
 
-Please express the worldbuilding and the temporal/spatial settings as vividly and specifically as possible.
-For the key events, provide a detailed summary of the most significant events in the story, including their impact on the protagonist and the world.
-key events will be used in building the main storyline of the game.
-
-The total maximum token limit is 3000, so be concise but thorough.
-1.  **"title"**: The title of the book.
-2.  **"author"**: The author of the book.
-3.  **"genre"**: The genre of the book.
-4.  **"protagonist"**: The main character or protagonist of the book.
-    * "name": character name or nickname.
-    * "age": estimated age.
-    * "gender": (string)
-    * "personality": personality summary.
-    * "background": background summary.
-    * "appearance": physical appearance.
-    * "summary": Analyze the following story and extract a concise visual description of the main protagonist.
+Here is the data schema you must adhere to for your output:
+{{
+    "title": "The title of the book.",
+    "author": "The author of the book.",
+    "genre": "The genre of the book.",
+    "protagonist": {{
+        "name": "character name or nickname.",
+        "age": "estimated age.",
+        "gender": "(string)",
+        "personality": "personality summary.",
+        "background": "background summary.",
+        "appearance": "physical appearance.",
+        "motivation": "The protagonist's primary drive, goals, or core desires throughout the story, explaining why they act as they do.",
+        "summary": "Analyze the following story and extract a concise visual description of the main protagonist.
         Output it as **a single line**, using comma-separated phrases only — no full sentences or bullet points.
 
         Format:
         [Estimated Age], [Gender], [Skin Tone], [Eye Color], [Hair Color], [General Clothing Style and Era or Region], [Optional: Personality expression or visual vibe]
 
         Guidelines:
-        - Avoid sensitive regional, racial, or political labels. Use descriptive, neutral terms (e.g., "desert region" instead of "Middle Eastern", "19th-century rural attire" instead of "American working-class").
+        - Avoid sensitive regional, racial, or political labels. Use descriptive, neutral terms (e.g., 'desert region' instead of 'Middle Eastern', '19th-century rural attire' instead of 'American working-class').
         - If any detail is missing, infer plausibly from context. Do not leave blanks.
         - Ensure the description is compact and under 300 characters.
         - Do not mention the word “style”, “tone”, or “era” explicitly — describe visually instead.
 
         Example:
-        Late 20s, Male, Sun-kissed skin, Hazel eyes, Black wavy hair, Simple tunic and scarf from a dry, rural land, Calm but alert expression
-5.  **"worldbuilding"**: environment, atmosphere, rules, tone, etc.
-6.  **"temporal_spatial_setting"**: historical context, geography, culture, architecture, etc.
-7.  **"plot_summary"**: A concise summary of the book's beginning or setup (around 100-200 words).
-8.  **"key_events"**: An array of 5 to 10 key plot points or major episodes. Each episode should have:
-    * "episode_num": (integer)
-    * "event_summary": Detailed descriptions of the key event.
-9.  **"ending_summary"**: A concise summary of how the story concludes.
-10.  **"book_overview"**: A general overview of the entire book, its genre, and main themes (around 200-300 words).
+        Late 20s, Male, Sun-kissed skin, Hazel eyes, Black wavy hair, Simple tunic and scarf from a dry, rural land, Calm but alert expression"
+    }},
+    "protagonist_for_view": {{ // Changed to a JSON object mirroring 'protagonist'
+        "name": "character name or nickname (Korean translation).",
+        "age": "estimated age (Korean translation).",
+        "gender": "(string) (Korean translation).",
+        "personality": "personality summary (Korean translation).",
+        "background": "background summary (Korean translation).",
+        "motivation": "The protagonist's primary drive, goals, or core desires (Korean translation).",
+        "appearance": "physical appearance (Korean translation).",
+        "summary": "Concise visual description (Korean translation)."
+    }},
+    "worldbuilding": "environment, atmosphere, rules, tone, etc.",
+    "temporal_spatial_setting": "historical context, geography, culture, architecture, etc.",
+    "plot_summary": "A concise summary of the book's beginning or setup (around 100-200 words).",
+    "key_events": [
+        {{
+            "episode_num": "(integer)",
+            "event_summary": "Detailed descriptions of the key event."
+        }}
+        // This array should contain 5 to 10 key plot points or major episodes.
+    ],
+    "ending_summary": "A concise summary of how the story concludes.",
+    "book_overview": "A general overview of the entire book, its genre, and main themes (around 200-300 words)."
+}}
 
-If a piece of information is not clearly available, use "N/A" or "Not found".
+**Instructions:**
+1.  Fill in all fields according to the provided schema.'
+2.  All analysis content, except for the 'protagonist_for_view' field, must be in English.
+3.  For the protagonist, describe in rich detail including name, estimated age, gender, clothing style, hair color and style, eye color, and any other distinctive physical features. Also include personality, background, and motivations.
+4.  For 'protagonist.summary', strictly follow the specified format (single line, comma-separated phrases, no full sentences or bullet points, under 300 characters).
+5.  Express the worldbuilding and the temporal/spatial settings as vividly and specifically as possible.
+6.  For the key events, provide a detailed summary of the most significant events in the story, including their impact on the protagonist and the world. Ensure you generate between 5 to 10 key plot points/episodes.
+7.  If a piece of information is not clearly available from the Book Text, use "N/A" or "Not found". Do not guess or invent information that is not implied by the text.
+8.  Your response must be **ONLY a valid JSON object**.
+9.  **DO NOT wrap the JSON output in markdown code blocks (e.g., ```json or ```).**
+10.  Do not include any additional text or explanations before or after the JSON object.
+11. The total maximum token limit for your response (including the JSON structure and content) is 3000 tokens. Be concise but thorough.
 
-Book Text:
+Book Text to analyze:
 <text_to_analyze>{extracted_text}</text_to_analyze>
 """
                     }
@@ -200,10 +223,11 @@ def save_metadata_to_dynamodb(
         'bookId': book_id,
         'title': analysis_data.get('title', 'Unknown Title'),
         'author': analysis_data.get('author', 'Unknown Author'),
-        'genre': analysis_data.get('genre', 'Unknown'),
+        'genre': analysis_data.get('genre', 'Unknown'), # AI가 장르를 추출하도록 프롬프트에 추가 가능
         'originalS3Key': original_s3_key,
         'processedS3Key': processed_s3_key,
         'protagonist': analysis_data.get('protagonist', []),
+        'protagonist_for_view': analysis_data.get('protagonist_for_view', []),
         'worldbuilding': analysis_data.get('worldbuilding', ''),
         'temporalSpatialSetting': analysis_data.get('temporal_spatial_setting', ''),
         'plotSummary': analysis_data.get('plot_summary', ''),
